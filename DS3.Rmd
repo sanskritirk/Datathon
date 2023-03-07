@@ -1,0 +1,129 @@
+---
+title: "DS3 Datathon"
+author: "Sanskriti Kanagala"
+date: "`r Sys.Date()`"
+output: html_document
+---
+# Library
+```{r}
+library(tidyverse)
+library("MASS")
+library("ggplot2")
+```
+
+# Loading Data Set
+```{r}
+data <- read.csv("Featurized Data.csv")
+head(data)
+```
+
+# Remaining Variables
+```{r}
+d2 = data %>% dplyr::select(-Cell.ID) %>%
+  rename(RUL = Remaining.Useful.Life,
+         IDC = initial.discharge.capacity,
+         FDC = final.discharge.capacity,
+         DCS = discharge.cap..slope,
+         DCI = dis..cap..intercept,
+         MR = min..resistance,
+         DR = Delta.resistance,
+         DV = Delta_Variance)
+names(d2)
+```
+
+#Cleaning Data Set
+```{r}
+d2 = d2 %>% 
+  mutate(IDC = as.numeric(str_sub(IDC, start = 2)),DV = as.numeric(str_sub(DV, end = -2)))
+d2
+```
+
+```{r}
+d2 = d2 %>% mutate(RUL = log(RUL_log))
+names(d2)
+```
+
+
+```{r}
+cor(d2)
+```
+
+# Splitting the dataset
+```{r}
+library(tidymodels, )
+set.seed(777)
+data_split = initial_split(d2, prop = 0.5)
+data_train = training(data_split)
+data_test = testing(data_split )
+```
+
+
+
+```{r}
+fit_full = lm(RUL~IDC+FDC+DCS+DCI+MR+DR+DV,data = d2)
+fit_simple = lm(RUL ~ 1,data = d2)
+step = stepAIC(fit_full , direction = "both",scope = list(upper  = fit_full,lower  =fit_simple))
+```
+
+# Our model is RUL ~ DCS + DCI + MR + DR
+
+```{r}
+library(rpart)
+library(rpart.plot)
+tree.m = rpart(RUL ~ DCS + DCI + MR + DR, data=data_train, control=rpart.control(maxdepth = 2))
+plot(tree.m,uniform=T,margin=0.5)
+text(tree.m)
+```
+```{r}
+#calculating predicted values
+
+data_test$pred.rul = predict(tree.m, newdata=data_test)
+data_test$pred.rul
+ggplot(data_test,aes(x=DCS,y=RUL)) +geom_jitter()+geom_line(aes(x=DCS,y=pred.rul),col="blue",linewidth=1.1)
+```
+
+```{r}
+#data_test$pred.rul = 10^(data_test$pred.rul)
+mean((data_test$RUL - data_test$pred.rul)^2)
+```
+```{r}
+resid_alt = lm(RUL ~DCS + DCI + MR + DR, data = data_train)$residuals
+shapiro.test(resid_alt)
+```
+
+
+```{r}
+library(randomForest)
+rforest.m = randomForest(RUL~DCS+DCI+MR+DR, data=data_train,ntree=500,importance=TRUE)
+varImpPlot(rforest.m)
+```
+
+```{r}
+data_test$pred.rul = predict(rforest.m, data_test)
+mean((data_test$RUL- data_test$pred.rul)^2)
+```
+```{r}
+ggplot(data_test,aes(x=DCS,y=RUL))+geom_jitter()+geom_line(aes(x=DCS,y=pred.rul),col="blue",linewidth=1.1)
+```
+
+
+
+
+```{r}
+feat.submit = read.csv(file="Featurized Data Prediction.csv", header=T)
+feat.submit = feat.submit %>%
+  rename('Cell ID' = Cell.ID,
+         IDC = initial.discharge.capacity,
+         FDC = final.discharge.capacity,
+         DCS = discharge.cap..slope,
+         DCI = dis..cap..intercept,
+         MR = min..resistance,
+         DR = Delta.resistance,
+         DV = Delta_Variance)
+#names(feat.submit)
+feat.submit$'Remaining Useful Life' =  predict(rforest.m, newdata= feat.submit)
+feat.submit$'Remaining Useful Life' = 10^(feat.submit$'Remaining Useful Life')
+feat.submit = feat.submit %>%  dplyr::select('Cell ID', 'Remaining Useful Life')
+write.csv(feat.submit, file="file_org12_submission.csv", row.names = F)
+```
+
